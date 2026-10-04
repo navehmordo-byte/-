@@ -94,7 +94,8 @@ const scene = new THREE.Scene();
 const SKY = 0xa9c9a4;
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 30, 115);
-scene.add(new THREE.HemisphereLight(0xf2ffe2, 0x2b3d1f, 0.9));
+const hemi = new THREE.HemisphereLight(0xf2ffe2, 0x2b3d1f, 0.9);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff1c8, 0.75);
 sun.position.set(6, 12, 5);
 scene.add(sun);
@@ -104,6 +105,20 @@ scene.add(levelGroup);
 let fxGroup = new THREE.Group();
 scene.add(fxGroup);
 addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+const SKIES = {
+  day: { bg: 0xa9c9a4, near: 30, far: 115, hemi: .9, hsky: 0xf2ffe2, sun: .75, sunc: 0xfff1c8 },
+  mist: { bg: 0xc9dbd0, near: 16, far: 78, hemi: 1, hsky: 0xf4fff8, sun: .5, sunc: 0xffffff },
+  sunset: { bg: 0xe2a36f, near: 28, far: 105, hemi: .75, hsky: 0xffd9b0, sun: .95, sunc: 0xffb070 },
+  night: { bg: 0x16263a, near: 20, far: 90, hemi: .5, hsky: 0x8fa4d8, sun: .45, sunc: 0xa8c0ff },
+  cave: { bg: 0x1d2a22, near: 14, far: 70, hemi: .6, hsky: 0xb0d8c0, sun: .35, sunc: 0x9ff4ff },
+  blood: { bg: 0xb4584a, near: 25, far: 100, hemi: .75, hsky: 0xffc0a0, sun: .95, sunc: 0xff8a60 },
+};
+function applySky(name) {
+  const k = SKIES[name] || SKIES.day;
+  scene.background.setHex(k.bg); scene.fog.color.setHex(k.bg); scene.fog.near = k.near; scene.fog.far = k.far;
+  hemi.intensity = k.hemi; hemi.color.setHex(k.hsky); sun.intensity = k.sun; sun.color.setHex(k.sunc);
+  document.body.style.background = '#' + k.bg.toString(16).padStart(6, '0');
+}
 
 // ---------------------------------------------------------------- textures & materials
 function canvasTex(size, paint) {
@@ -139,6 +154,8 @@ const M = {
   black: new THREE.MeshBasicMaterial({ color: 0x151515 }),
   vanish: new THREE.MeshPhongMaterial({ color: 0x7fe3ff, transparent: true, opacity: .72, shininess: 90, emissive: 0x1a5a70 }),
   gold: new THREE.MeshPhongMaterial({ color: 0xe8b830, emissive: 0x3a2800, shininess: 80 }),
+  shroom: lam(0xd83a2e), shroomSpot: lam(0xfff4e0), stem: lam(0xefe2c4),
+  fall: new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: .55, depthWrite: false }),
   water: new THREE.MeshPhongMaterial({ color: 0x2f7466, transparent: true, opacity: .9, shininess: 60 }),
   blade: new THREE.MeshPhongMaterial({ color: 0xe6edf5, shininess: 140, specular: 0xffffff }),
   laser: new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: .9 }),
@@ -158,6 +175,7 @@ const cyanGlow = glowMat(0x55e6ff), redGlow = glowMat(0xff3a3a), goldGlow = glow
 const GEO = {
   box: new THREE.BoxGeometry(1, 1, 1), octa: new THREE.OctahedronGeometry(1, 0), cyl: new THREE.CylinderGeometry(1, 1, 1, 12),
   trunk: new THREE.CylinderGeometry(.7, 1, 1, 7), ico: new THREE.IcosahedronGeometry(1, 0), sph: new THREE.SphereGeometry(1, 14, 10),
+  dome: new THREE.SphereGeometry(1, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2),
   cone: new THREE.ConeGeometry(1, 1, 6), wave: new THREE.CylinderGeometry(1, 1, .7, 48, 1, true), circle: new THREE.CircleGeometry(1, 24),
   torus: new THREE.TorusGeometry(1.7, .22, 10, 40), ring: new THREE.RingGeometry(.75, 1, 32),
 };
@@ -182,7 +200,7 @@ const SFX = {
   gem: () => { tone(1320, 1760, .09, 'sine', .08); tone(1760, 2400, .12, 'sine', .06, .06); },
   hurt: () => tone(260, 70, .3, 'sawtooth', .09), swing: () => tone(900, 300, .09, 'triangle', .04),
   hit: () => { tone(180, 60, .18, 'square', .1); tone(900, 400, .1, 'triangle', .06); }, clink: () => tone(2200, 1800, .08, 'triangle', .06),
-  slam: () => tone(90, 30, .5, 'sine', .3), shoot: () => tone(1400, 700, .12, 'sine', .04),
+  slam: () => tone(90, 30, .5, 'sine', .3), bounce: () => tone(220, 880, .22, 'sine', .1), shoot: () => tone(1400, 700, .12, 'sine', .04),
   cp: () => [523, 659, 784].forEach((f, i) => tone(f, f, .16, 'sine', .08, i * .09)),
   win: () => [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, f * 1.01, .25, 'triangle', .09, i * .13)),
   down: () => tone(400, 50, .7, 'sawtooth', .08),
@@ -416,7 +434,8 @@ class Player {
     }
     if (this.onGround) {
       this.jumps = 0;
-      const g = this.ground; g.onStand && g.onStand();
+      const g = this.ground; g.onStand && g.onStand(this);
+      if (!this.ground) return;
       if (g.safe) this.lastSafe.set(clamp(p.x, g.min.x + .5, g.max.x - .5), p.y, clamp(p.z, g.min.z + .5, g.max.z - .5));
     }
   }
@@ -506,16 +525,18 @@ function clampToArena(v, c, margin) { v.x = clamp(v.x, c.x - 14 + margin, c.x + 
 function bossEyeMats() { return { cyanEye: diamondMat.clone(), redEye: redEyeMat.clone() }; }
 
 class Guardian {
-  constructor(c) {
-    this.c = c; this.name = 'שומר האבן'; this.maxHp = this.hp = 18;
-    this.st = makeStatue(3, { clean: true }); Object.assign(this.st, bossEyeMats());
-    this.g = this.st.group; this.g.position.set(c.x, c.y - 9, c.z - 5); levelGroup.add(this.g);
-    this.state = 'wake'; this.t = 2.2; this.slams = 0; this.vulnerable = false;
+  constructor(c, o) {
+    o = o || {}; this.o = o; this.spd = o.speed || 1; this.maxSlams = o.slams || 3;
+    this.c = c; this.name = o.name || 'שומר האבן'; this.maxHp = this.hp = o.hp || 18;
+    this.st = makeStatue(o.scale || 3, { clean: true }); Object.assign(this.st, bossEyeMats());
+    this.g = this.st.group; this.g.position.set(c.x + (o.x || 0), c.y - 9, c.z - 5); levelGroup.add(this.g);
+    this.state = 'wake'; this.t = 2.2 + (o.delay || 0); this.slams = 0; this.vulnerable = false;
     this.marker = mk(GEO.circle, M.marker, 2.6, 2.6, 1, 0, c.y + .05, 0); this.marker.rotation.x = -Math.PI / 2; this.marker.visible = false;
     setEyes(this.st, false, 1);
   }
   get pos() { return this.g.position; }
   update(dt) {
+    dt *= this.spd;
     const c = this.c, g = this.g; this.t -= dt;
     const tgt = nearestPlayer(g.position);
     switch (this.state) {
@@ -527,7 +548,7 @@ class Guardian {
         if (tgt) faceToward(g, g.position, tgt.pos, dt);
         if (this.t < .5) { setEyes(this.st, true, 1.3); g.position.x += (rnd() - .5) * .08; }
         if (this.t <= 0) {
-          if (this.slams >= 3) { this.state = 'tired'; this.t = 4.2; this.slams = 0; this.vulnerable = true; setEyes(this.st, false, 2.2); say('העיניים זוהרות — עכשיו! תקפו את השומר!', 2); break; }
+          if (this.slams >= this.maxSlams) { this.state = 'tired'; this.t = 4.2; this.slams = 0; this.vulnerable = true; setEyes(this.st, false, 2.2); say('העיניים זוהרות — עכשיו! תקפו את השומר!', 2); break; }
           const target = (randomPlayer() || tgt).pos.clone();
           this.from = g.position.clone(); this.to = clampToArena(new V3(target.x, c.y, target.z), c, 3);
           this.jt = 0; this.dur = 1.15; this.state = 'jump';
@@ -542,6 +563,7 @@ class Guardian {
         if (k >= 1) {
           g.position.y = c.y; this.marker.visible = false; this.slams++;
           G.waves.push(new Shockwave(g.position.x, c.y, g.position.z, 10.5));
+          if (this.o.double) G.waves.push(new Shockwave(g.position.x, c.y, g.position.z, 6.5, 14));
           G.shake = .6; SFX.slam(); burst(new V3(g.position.x, c.y + .3, g.position.z), 0x9a9f88, 20, 10);
           for (const pl of G.players) if (pl.alive && Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < 3 && pl.pos.y < c.y + 4) pl.hurt(g.position);
           this.state = 'idle'; this.t = .6 + .9 * this.hp / this.maxHp; setEyes(this.st, false, 1);
@@ -572,8 +594,9 @@ class Guardian {
 }
 
 class Serpent {
-  constructor(c) {
-    this.c = c; this.name = 'נחש היהלומים'; this.maxHp = this.hp = 18;
+  constructor(c, o) {
+    o = o || {}; this.o = o; this.spd = o.speed || 1; this.minions = [];
+    this.c = c; this.name = o.name || 'נחש היהלומים'; this.maxHp = this.hp = o.hp || 18;
     this.base = new V3(c.x, c.y, c.z - 3);
     this.hole = mk(GEO.circle, M.black, 2.4, 2.4, 1, this.base.x, c.y + .04, this.base.z); this.hole.rotation.x = -Math.PI / 2;
     this.segs = [];
@@ -600,8 +623,10 @@ class Serpent {
   }
   circlePoint(a) { return new V3(this.base.x + Math.cos(a) * 7.5, this.c.y + 6 + Math.sin(a * 2) * 1.2, this.base.z + Math.sin(a) * 7.5); }
   update(dt) {
+    dt *= this.spd;
     const c = this.c; this.t -= dt;
     const tgt = nearestPlayer(this.headPos);
+    updateMinions(this.minions, dt, c);
     switch (this.state) {
       case 'emerge': {
         const goal = this.circlePoint(0); this.headPos.lerp(goal, Math.min(1, dt * 2)); G.shake = Math.max(G.shake, .1);
@@ -649,8 +674,11 @@ class Serpent {
         for (const e of this.st.glows) e.scale.setScalar(2.2 + Math.sin(G.t * 10) * .6);
         if (this.t <= 0) {
           this.vulnerable = false; this.head.rotation.z = 0; setEyes(this.st, false, 1.3); this.strikes++;
-          if (this.hp < this.maxHp / 2 && this.strikes % 2 === 1) { this.state = 'aim'; this.t = 1.2; this.target = randomPlayer(); this.marker.visible = true; setEyes(this.st, true, 1.6); }
-          else { this.state = 'circle'; this.t = 5; this.ang = Math.atan2(this.headPos.z - this.base.z, this.headPos.x - this.base.x); }
+          if ((this.o.double || this.hp < this.maxHp / 2) && this.strikes % 2 === 1) { this.state = 'aim'; this.t = 1.2; this.target = randomPlayer(); this.marker.visible = true; setEyes(this.st, true, 1.6); }
+          else {
+            this.state = 'circle'; this.t = 5; this.ang = Math.atan2(this.headPos.z - this.base.z, this.headPos.x - this.base.x);
+            if (this.o.minions) { summonMinions(this.minions, c, 2, 4); say('הנחש מזמן פסלוני אבן!', 1.5); }
+          }
         }
         break;
       case 'dying':
@@ -677,7 +705,7 @@ class Serpent {
   }
   hitSpheres() { return [{ p: this.headPos.clone(), r: 1.9 }]; }
   onHit() { }
-  kill() { this.state = 'dying'; this.t = 2.5; this.vulnerable = false; this.marker.visible = false; }
+  kill() { this.state = 'dying'; this.t = 2.5; this.vulnerable = false; this.marker.visible = false; killMinions(this.minions); }
 }
 
 class Minion {
@@ -701,10 +729,31 @@ class Minion {
   }
 }
 
+function updateMinions(list, dt, c) { for (const m of list) if (m.hp > 0) m.update(dt, c); }
+function killMinions(list) { for (const m of list) if (m.hp > 0) { m.hp = 0; burst(m.g.position, 0x9a9f88, 10); levelGroup.remove(m.g); } }
+function summonMinions(list, c, n, max) {
+  const alive = list.filter(m => m.hp > 0).length;
+  for (let i = 0; i < Math.min(n, max - alive); i++) {
+    const a = rnd() * TAU, p = clampToArena(new V3(c.x + Math.cos(a) * 6, c.y, c.z + 2 + Math.sin(a) * 5), c, 2);
+    list.push(new Minion(p.x, c.y, p.z)); burst(p, 0x9a9f88, 10, 6);
+  }
+  SFX.slam();
+}
+function beamHit(origin, ang, len, maxY) {
+  const dir = new V3(Math.cos(ang), 0, Math.sin(ang));
+  for (const pl of G.players) {
+    if (pl.dead || pl.pos.y > maxY) continue;
+    const rel = new V3(pl.pos.x - origin.x, 0, pl.pos.z - origin.z);
+    const along = rel.dot(dir); if (along < 0 || along > len) continue;
+    if (rel.sub(dir.clone().multiplyScalar(along)).length() < .55) pl.hurt(origin);
+  }
+}
+
 class StatueKing {
-  constructor(c) {
-    this.c = c; this.name = 'מלך הפסלים'; this.maxHp = this.hp = 26;
-    this.st = makeStatue(3.4, { crown: true, clean: true, mat: M.stoneDark }); Object.assign(this.st, bossEyeMats());
+  constructor(c, o) {
+    o = o || {}; this.o = o; this.spd = o.speed || 1;
+    this.c = c; this.name = o.name || 'מלך הפסלים'; this.maxHp = this.hp = o.hp || 26;
+    this.st = makeStatue(o.scale || 3.4, { crown: true, clean: true, mat: o.mat || M.stoneDark }); Object.assign(this.st, bossEyeMats());
     this.g = this.st.group; this.home = new V3(c.x, c.y, c.z - 7); this.g.position.set(c.x, c.y - 10, c.z - 7); levelGroup.add(this.g);
     this.seq = ['slam', 'volley', 'summon', 'laser', 'tired']; this.si = -1;
     this.state = 'wake'; this.t = 2.5; this.vulnerable = false; this.minions = [];
@@ -722,6 +771,7 @@ class StatueKing {
     if (s === 'tired') { this.t = 4.5; this.vulnerable = true; setEyes(this.st, false, 2.4); say('אבן החזה של המלך חשופה — תקפו!', 2); }
   }
   update(dt) {
+    dt *= this.spd;
     const c = this.c, g = this.g; this.t -= dt;
     const tgt = nearestPlayer(g.position);
     if (tgt && this.state !== 'tired' && this.state !== 'dying') faceToward(g, g.position, tgt.pos, dt, 2);
@@ -798,7 +848,127 @@ class StatueKing {
     for (const m of this.minions) if (m.hp > 0) { m.hp = 0; burst(m.g.position, 0x9a9f88, 10); levelGroup.remove(m.g); }
   }
 }
-const BOSSES = { guardian: Guardian, serpent: Serpent, king: StatueKing };
+class TwinGuardians {
+  constructor(c, o) {
+    this.c = c; this.name = o.name || 'תאומי האבן'; this.maxHp = this.hp = o.hp || 28;
+    // two guardians with a shared health bar; the second wakes later so they tire at different times
+    this.parts = [new Guardian(c, { speed: o.speed || 1.1, x: -5, scale: 2.4 }), new Guardian(c, { speed: o.speed || 1.1, x: 5, delay: 2.6, scale: 2.4 })];
+    this.state = 'fight'; this.vulnerable = false;
+  }
+  update(dt) {
+    for (const p of this.parts) p.update(dt);
+    if (this.state === 'dying') { this.t -= dt; if (this.t <= 0) this.dead = true; return; }
+    this.vulnerable = this.parts.some(p => p.vulnerable);
+  }
+  hitSpheres() { return this.parts.flatMap(p => p.hitSpheres().map(s => Object.assign(s, { vuln: p.vulnerable }))); }
+  kill() { this.state = 'dying'; this.t = 2.6; this.vulnerable = false; this.parts.forEach(p => p.kill()); }
+}
+
+class DiamondEye {
+  constructor(c, o) {
+    o = o || {}; this.c = c; this.o = o; this.spd = o.speed || 1;
+    this.name = o.name || 'עין היהלום'; this.maxHp = this.hp = o.hp || 20;
+    const g = new THREE.Group(); this.g = g; levelGroup.add(g);
+    this.body = mk(GEO.octa, new THREE.MeshPhongMaterial({ color: 0x9ff8ff, emissive: 0x1d7fa8, specular: 0xffffff, shininess: 200, flatShading: true }), 2.2, 3.2, 2.2, 0, 0, 0, g);
+    this.ring = mk(GEO.torus, M.gold, 1.25, 1.25, 1.25, 0, 0, 0, g); this.ring.rotation.x = Math.PI / 2;
+    const eye = new THREE.Group(); eye.position.set(0, .25, 1.55); g.add(eye);
+    mk(GEO.sph, lam(0xffffff), .85, .85, .35, 0, 0, 0, eye);
+    this.iris = mk(GEO.sph, new THREE.MeshBasicMaterial({ color: 0x2ad0ff }), .45, .45, .2, 0, 0, .22, eye);
+    mk(GEO.sph, M.black, .2, .2, .1, 0, 0, .36, eye);
+    this.glow = new THREE.Sprite(glowMat(0x55e6ff)); this.glow.scale.setScalar(7); g.add(this.glow);
+    g.position.set(c.x, c.y + 22, c.z - 4);
+    this.beams = [];
+    for (let i = 0; i < (o.beams || 1); i++) {
+      const bg = new THREE.Group(); levelGroup.add(bg);
+      const m = mk(GEO.box, M.laser.clone(), 18, .3, .3, 9, 0, 0, bg); bg.visible = false; this.beams.push({ g: bg, m });
+    }
+    this.marker = mk(GEO.circle, M.marker, 2.6, 2.6, 1, 0, c.y + .05, 0); this.marker.rotation.x = -Math.PI / 2; this.marker.visible = false;
+    this.seq = ['hover', 'sweep', 'hover', 'fall']; this.si = -1; this.minions = [];
+    this.state = 'wake'; this.t = 2.2; this.vulnerable = false; this.fireT = 1;
+  }
+  setIris(red, big) { this.iris.material.color.setHex(red ? 0xff2a2a : 0x2ad0ff); this.glow.material.color.setHex(red ? 0xff4040 : 0x55e6ff); this.glow.scale.setScalar(big ? 10 : 7); }
+  next() {
+    this.si = (this.si + 1) % this.seq.length; this.state = this.seq[this.si]; this.sub = 0;
+    if (this.state === 'hover') { this.t = 3.6; this.setIris(false); }
+    if (this.state === 'sweep') {
+      this.t = 1.3; this.setIris(true, true); this.ang = rnd() * TAU;
+      for (const b of this.beams) { b.g.visible = true; b.m.material.opacity = .22; b.m.scale.y = b.m.scale.z = .08; }
+      say('קרן לייזר — קפצו מעליה!', 1.4);
+    }
+    if (this.state === 'fall') { this.t = .9; this.setIris(true); const t = randomPlayer().pos; this.marker.visible = true; this.marker.position.set(t.x, this.c.y + .05, t.z); clampToArena(this.marker.position, this.c, 3); }
+  }
+  update(dt) {
+    dt *= this.spd;
+    const c = this.c, g = this.g; this.t -= dt;
+    const tgt = nearestPlayer(g.position), angry = (this.o.beams || 1) > 1 || this.hp < this.maxHp / 2;
+    if (tgt && this.state !== 'tired' && this.state !== 'dying') faceToward(g, g.position, tgt.pos, dt, 4);
+    this.ring.rotation.z += dt * 2; this.body.rotation.y += dt * 1.2;
+    updateMinions(this.minions, dt, c);
+    switch (this.state) {
+      case 'wake':
+        g.position.y = c.y + 5.5 + 16.5 * Math.max(0, this.t / 2.2);
+        if (this.t <= 0) this.next();
+        break;
+      case 'hover': {
+        const want = new V3(c.x + Math.sin(G.t * .7) * 7, c.y + 5.5 + Math.sin(G.t * 2) * .5, c.z - 2 + Math.sin(G.t * 1.1) * 5);
+        g.position.lerp(want, Math.min(1, dt * 2));
+        this.fireT -= dt;
+        if (this.fireT <= 0) {
+          this.fireT = angry ? .6 : .85;
+          const from = g.localToWorld(new V3(0, .25, 1.8)), target = randomPlayer().center();
+          aimShard(from, target, 11);
+          if (angry) { aimShard(from, target, 11, .3); aimShard(from, target, 11, -.3); }
+        }
+        if (this.t <= 0) this.next();
+        break;
+      }
+      case 'sweep': {
+        g.position.lerp(new V3(g.position.x, c.y + 3.6, g.position.z), Math.min(1, dt * 3));
+        const origin = new V3(g.position.x, c.y + .6, g.position.z);
+        this.beams.forEach((b, i) => { b.g.position.copy(origin); b.g.rotation.y = -(this.ang + i * TAU / this.beams.length); });
+        if (this.t > 0) { for (const b of this.beams) b.m.material.opacity = .25 + Math.sin(G.t * 30) * .1; break; }
+        if (this.sub === 0) { this.sub = 1; this.sweep = 0; SFX.shoot(); for (const b of this.beams) { b.m.scale.y = b.m.scale.z = .32; b.m.material.opacity = .9; } }
+        const sp = angry ? 1.7 : 1.35; this.sweep += sp * dt; this.ang += sp * dt;
+        this.beams.forEach((b, i) => beamHit(origin, this.ang + i * TAU / this.beams.length, 18, c.y + .9));
+        if (this.sweep >= TAU / this.beams.length * (this.beams.length > 1 ? 1.5 : 1)) { this.beams.forEach(b => b.g.visible = false); this.next(); }
+        break;
+      }
+      case 'fall':
+        if (this.t > 0) {
+          g.position.lerp(new V3(this.marker.position.x, c.y + 7, this.marker.position.z), Math.min(1, dt * 4));
+          g.position.x += (rnd() - .5) * .15; this.marker.material.opacity = .3 + Math.sin(G.t * 20) * .2;
+        } else {
+          g.position.y -= dt * 30;
+          if (g.position.y <= c.y + 1.8) {
+            g.position.y = c.y + 1.8; this.marker.visible = false; G.shake = .6; SFX.slam();
+            G.waves.push(new Shockwave(g.position.x, c.y, g.position.z, 10));
+            for (const pl of G.players) if (pl.alive && Math.hypot(pl.pos.x - g.position.x, pl.pos.z - g.position.z) < 2.6) pl.hurt(g.position);
+            if (this.o.minions) summonMinions(this.minions, c, 2, 4);
+            this.state = 'tired'; this.t = 4; this.vulnerable = true; this.setIris(false, true);
+            say('העין נפלה לאדמה — תקפו!', 1.6);
+          }
+        }
+        break;
+      case 'tired':
+        this.glow.scale.setScalar(9 + Math.sin(G.t * 10) * 2); g.rotation.x = Math.sin(G.t * 6) * .1;
+        if (this.t <= 0) { this.vulnerable = false; g.rotation.x = 0; this.state = 'rise'; this.t = 1; this.setIris(false); }
+        break;
+      case 'rise':
+        g.position.y = lerp(g.position.y, c.y + 5.5, dt * 3);
+        if (this.t <= 0) { this.si = -1; this.next(); }
+        break;
+      case 'dying':
+        g.position.y -= dt * 2; this.body.rotation.y += dt * 8; G.shake = Math.max(G.shake, .2);
+        if (rnd() < .4) burst(g.position, 0x9ff4ff, 5, 8);
+        if (this.t <= 0) this.dead = true;
+        break;
+    }
+    if (g.position.y < c.y + 3.5 && this.state !== 'dying') pushOut(g.position, 1.9, c.y + 4);
+  }
+  hitSpheres() { return [{ p: this.g.position.clone(), r: 2.4 }]; }
+  kill() { this.state = 'dying'; this.t = 2.5; this.vulnerable = false; this.marker.visible = false; this.beams.forEach(b => b.g.visible = false); killMinions(this.minions); }
+}
+const BOSSES = { guardian: Guardian, serpent: Serpent, king: StatueKing, twins: TwinGuardians, eye: DiamondEye };
 
 // ---------------------------------------------------------------- level builder
 function Builder() {
@@ -897,6 +1067,42 @@ function Builder() {
         test(pl) { return this.on && Math.abs(pl.pos.z - z) < .45 && Math.abs(pl.pos.x - x) < len / 2 + .3 && pl.pos.y < top + .85; },
       });
     },
+    mushroom(x, top, z, r) {
+      const g = new THREE.Group(); g.position.set(x, top, z); levelGroup.add(g);
+      mk(GEO.cyl, M.stem, r * .32, 15, r * .32, 0, -7.6, 0, g);
+      const cap = mk(GEO.dome, M.shroom, r, r * .55, r, 0, -r * .55, 0, g);
+      mk(GEO.circle, M.stem, r, r, 1, 0, -r * .55, 0, g).rotation.x = Math.PI / 2;
+      for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; mk(GEO.sph, M.shroomSpot, .12, .06, .12, Math.cos(a) * .55, .84, Math.sin(a) * .55, cap); }
+      mk(GEO.sph, M.shroomSpot, .14, .07, .14, 0, 1, 0, cap);
+      const c = collider(g, x, top, z, r * 1.8, .6, r * 1.8, { safe: false, bounce: true });
+      c.squash = 0;
+      c.onStand = p => {
+        if (!p) return;
+        p.vel.y = 17; p.onGround = false; p.ground = null; p.jumps = 1; c.squash = .25; SFX.bounce();
+        burst(new V3(p.pos.x, p.pos.y, p.pos.z), 0xffe0e0, 5, 3);
+      };
+      c.tick = (t, dt) => { c.squash = Math.max(0, c.squash - dt); cap.scale.set(r * (1 + c.squash * .8), r * .55 * (1 - c.squash * 1.5), r * (1 + c.squash * .8)); };
+      movers.push(c); return c;
+    },
+    boulder(x, top, z1, z2, period, off) {
+      const R = .85, dir = Math.sign(z2 - z1);
+      const m = mk(GEO.ico, M.stoneDark, R, R, R, x, top + R, z1);
+      hazards.push({
+        type: 'boulder', src: new V3(x, top, z1), r: 0,
+        update(t) {
+          const ph = ((t + (off || 0)) % period) / period, z = lerp(z1, z2, ph);
+          const k = Math.min(1, ph * 12, (1 - ph) * 12); this.r = R * k;
+          m.scale.setScalar(Math.max(.01, this.r)); m.position.set(x, top + this.r, z); m.rotation.x = (z - z1) / R * dir;
+          this.src.set(x, top, z - dir);
+        },
+        test(pl) { return this.r > .5 && pl.pos.y < top + .95 && Math.abs(pl.pos.z - m.position.z) < this.r + .3 && Math.abs(pl.pos.x - x) < this.r + .25; },
+      });
+    },
+    waterfall(x, z, top, w) {
+      mk(GEO.box, M.fall, w, top + 14, .5, x, (top - 14) / 2, z);
+      boxM(M.stoneDark, w + 2, 2, 3, x, top + 1, z - 1);
+      for (let i = 0; i < 4; i++) { const sp = new THREE.Sprite(glowMat(0xdff6ff)); sp.position.set(x + (rnd() - .5) * w, -13, z + 1); sp.scale.setScalar(5 + rnd() * 3); levelGroup.add(sp); }
+    },
     gem(x, y, z) {
       const m = mk(GEO.octa, gemMat, .3, .42, .3, x, y + 1, z);
       const gl = new THREE.Sprite(cyanGlow); gl.scale.set(1.6 / .3, 1.6 / .42, 1); m.add(gl);
@@ -952,7 +1158,7 @@ function Builder() {
 // ---------------------------------------------------------------- levels
 const LEVELS = [
   {
-    name: 'שביל המקדש', sub: 'קפצו מאבן לאבן והגיעו אל שומר האבן', boss: 'guardian',
+    name: 'שביל המקדש', sky: 'day', sub: 'קפצו מאבן לאבן והגיעו אל שומר האבן', boss: 'guardian',
     build(B) {
       B.box(0, 0, 0, 8, 2, 12);
       B.statue(-3, 0, -3.5, .9, .4); B.statue(3, 0, -3.5, .9, -.4);
@@ -975,7 +1181,7 @@ const LEVELS = [
     },
   },
   {
-    name: 'גשרי הגפנים', sub: 'אבנים מתפוררות ובולי עץ מסתובבים — היזהרו מנחש היהלומים', boss: 'serpent',
+    name: 'גשרי הגפנים', sky: 'day', sub: 'אבנים מתפוררות ובולי עץ מסתובבים — היזהרו מנחש היהלומים', boss: 'serpent',
     build(B) {
       B.box(0, 0, 0, 8, 2, 12);
       B.crumble(0, 0, -9, 3, 3); B.crumble(0, 0, -13.5, 3, 3); B.crumble(0, 0, -18, 3, 3);
@@ -997,7 +1203,7 @@ const LEVELS = [
     },
   },
   {
-    name: 'לב המקדש', sub: 'קרני לייזר מעיני הפסלים — ובסוף, מלך הפסלים בעצמו', boss: 'king',
+    name: 'לב המקדש', sky: 'day', sub: 'קרני לייזר מעיני הפסלים — ובסוף, מלך הפסלים בעצמו', boss: 'king',
     build(B) {
       B.box(0, 0, 0, 8, 2, 12);
       B.box(0, 0, -16, 6, 2, 20); B.laser(0, 0, -10, 6, 2.6, 0); B.laser(0, 0, -15, 6, 2.6, .9); B.laser(0, 0, -20, 6, 2.6, 1.8);
@@ -1014,6 +1220,134 @@ const LEVELS = [
       B.box(0, 4, -84, 6, 2, 6); B.cp(0, 4, -84);
       B.box(0, 2, -94, 6, 2, 12); B.laser(0, 2, -94, 6, 2.2, 0); B.cp(0, 2, -90);
       B.arena(0, 2, -114, 'king');
+    },
+  },
+  {
+    name: 'המפל הנסתר', sky: 'mist', sub: 'פטריות קפיצה ומפלים — שומר האבן חזר, והוא זועם',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.waterfall(-13, -20, 10, 7); B.waterfall(14, -48, 12, 6); B.waterfall(-12, -75, 11, 8);
+      B.move(0, 0, -9, 3, 3, 'y', 1.2, 1.4); B.box(0, 1.5, -14, 3, 2, 3); B.gem(0, 1.5, -14);
+      B.mushroom(0, 1, -19, 1.6); B.gemRow(0, 4, -19, -19, 1);
+      B.box(0, 5, -25, 4, 2, 4); B.cp(0, 5, -25);
+      B.move(0, 5, -31, 3, 3, 'x', 3, 1.3); B.move(0, 5, -36, 3, 3, 'y', 2, 1.2); B.gem(0, 6, -36);
+      B.box(0, 6, -41, 4, 2, 4); B.gem(0, 6, -41);
+      B.mushroom(-2, 4, -46, 1.4); B.mushroom(2, 5, -50.5, 1.4); B.gem(-2, 7, -46); B.gem(2, 8, -50.5);
+      B.box(0, 9, -56, 5, 2, 5); B.cp(0, 9, -56); B.statue(-1.8, 9, -57.8, .6, .3);
+      B.box(0, 8, -63, 3, 1, 6); B.spinner(0, 8, -63, 2.8, 2.4); B.gem(0, 8, -61);
+      B.move(0, 8, -71, 3, 3, 'z', 2, 1.1); B.gem(0, 8.5, -71);
+      B.box(0, 6, -78, 5, 2, 5); B.gemRow(-1.5, 6, -77, -79, 2); B.gemRow(1.5, 6, -77, -79, 2);
+      B.box(0, 2, -87, 6, 2, 10); B.cp(0, 2, -84);
+      B.arena(0, 2, -106, { type: 'guardian', name: 'שומר האבן הזועם', hp: 22, speed: 1.25, slams: 4, double: true });
+    },
+  },
+  {
+    name: 'סבך הקוצים', sky: 'day', sub: 'בולי עץ מסתובבים בכל פינה — נחש היהלומים הזועם מחכה',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.box(0, 0, -16, 4, 1, 20, M.wood); B.spinner(0, 0, -10, 3.6, 2.2); B.spinner(0, 0, -16, 3.6, -2.6); B.spinner(0, 0, -22, 3.6, 3);
+      B.gemRow(-1.4, 0, -8, -24, 4); B.cp(0, 0, -24.5);
+      B.crumble(0, 0, -29, 3, 3); B.crumble(1.5, .5, -33.5, 3, 3); B.crumble(-1, 1, -38, 3, 3);
+      B.gem(0, 0, -29); B.gem(1.5, .5, -33.5); B.gem(-1, 1, -38);
+      B.box(0, 1.5, -43, 5, 2, 5); B.cp(0, 1.5, -43);
+      B.move(0, 1.5, -49, 3, 3, 'x', 3, 1.5);
+      B.box(0, 1.5, -56, 4, 1, 8, M.wood); B.spinner(0, 1.5, -56, 3.6, -2.8); B.gemRow(0, 1.5, -53, -59, 2);
+      B.crumble(0, 1.5, -63, 3, 3); B.crumble(0, 1.5, -67, 3, 3);
+      B.box(0, 2, -72, 5, 2, 5); B.cp(0, 2, -72);
+      B.box(0, 2, -82, 5, 1, 12, M.wood); B.spinner(0, 2, -79, 4.5, 2); B.spinner(0, 2, -85, 4.5, -2.4); B.gemRow(-2, 2, -77, -87, 3);
+      B.box(0, 2, -95, 6, 2, 10); B.cp(0, 2, -92);
+      B.arena(0, 2, -114, { type: 'serpent', name: 'נחש היהלומים הזועם', hp: 22, speed: 1.2, double: true });
+    },
+  },
+  {
+    name: 'עמק הסלעים', sky: 'sunset', sub: 'סלעים מתגלגלים בשקיעה — ושני שומרים תאומים',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.box(0, 0, -18, 4, 1, 24); B.boulder(0, 0, -29, -7, 3.2, 0); B.gemRow(-1.5, 0, -10, -26, 4);
+      B.box(0, 0, -35, 4, 2, 4); B.cp(0, 0, -35);
+      B.box(0, 0, -47, 1.8, .8, 16); B.boulder(0, 0, -54, -40, 3.6, 1); B.gemRow(0, 0, -42, -52, 3);
+      B.box(0, 0, -59, 4, 2, 4); B.cp(0, 0, -59);
+      B.move(0, .5, -65, 3, 3, 'x', 3, 1.4); B.move(0, 1, -70.5, 3, 3, 'z', 1.5, 1.2); B.gem(0, 1.5, -70.5);
+      B.box(0, 1.5, -77, 4, 2, 4); B.cp(0, 1.5, -77);
+      B.box(0, 2, -88, 5, 1, 16); B.boulder(-1.2, 2, -95, -81, 3, 0); B.boulder(1.2, 2, -95, -81, 3, 1.5); B.gemRow(0, 2, -82, -94, 3);
+      B.box(0, 2, -103, 6, 2, 10); B.cp(0, 2, -100);
+      B.arena(0, 2, -122, { type: 'twins', hp: 28, speed: 1.1 });
+    },
+  },
+  {
+    name: 'המקדש השוקע', sky: 'cave', sub: 'מעמקי המקדש: פלטפורמות נעלמות ועין יהלום ענקית',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.vanish(0, 0, -9, 3, 3, 3, 0); B.vanish(0, 0, -13.5, 3, 3, 3, 1); B.vanish(0, 0, -18, 3, 3, 3, 2);
+      B.gem(0, 0, -9); B.gem(0, 0, -13.5); B.gem(0, 0, -18);
+      B.box(0, 0, -24, 5, 2, 6); B.cp(0, 0, -24);
+      B.box(0, 0, -34, 6, 2, 12); B.laser(0, 0, -31, 6, 2.4, .8); B.laser(0, 0, -36, 6, 2.4, 1.6); B.gemRow(2, 0, -29, -38, 3);
+      B.cp(0, 0, -39);
+      B.vanish(-2, .5, -44, 2.5, 2.5, 2.6, 0); B.vanish(1.5, 1, -48.5, 2.5, 2.5, 2.6, .9); B.vanish(-1, 1.5, -53, 2.5, 2.5, 2.6, 1.8);
+      B.box(0, 2, -58, 4, 2, 4); B.cp(0, 2, -58);
+      B.move(0, 2, -64, 3, 3, 'x', 3, 1.5); B.vanish(0, 2, -69, 3, 3, 3, 0); B.move(0, 2, -74, 3, 3, 'x', 3, 1.5, Math.PI);
+      B.gem(0, 2, -69);
+      B.box(0, 2, -80, 5, 2, 5); B.cp(0, 2, -80);
+      B.box(0, 2, -90, 6, 2, 10); B.laser(0, 2, -90, 6, 2.2, .5); B.cp(0, 2, -87);
+      B.arena(0, 2, -109, { type: 'eye', hp: 20 });
+    },
+  },
+  {
+    name: 'מגדל הפסלים', sky: 'night', sub: 'טפסו אל ראש המגדל בלילה — הנחש מזמן פסלונים',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.mushroom(0, 0, -9, 1.6); B.box(0, 4, -14, 3, 2, 3); B.gem(0, 4, -14);
+      B.box(-2, 5, -18, 2, 3, 2); B.box(1, 6, -21, 2, 3, 2); B.box(-1, 7, -24, 2, 3, 2);
+      B.gem(-2, 5, -18); B.gem(1, 6, -21); B.gem(-1, 7, -24);
+      B.box(0, 7, -30, 5, 2, 6); B.cp(0, 7, -30);
+      B.mushroom(2, 6, -36, 1.4); B.box(0, 10, -42, 3, 2, 3); B.gem(0, 10, -42);
+      B.move(0, 10, -47, 3, 3, 'y', 1.5, 1.4);
+      B.box(0, 11.5, -52, 4, 2, 4); B.cp(0, 11.5, -52);
+      B.box(0, 11.5, -59, 5, 1, 6); B.spinner(0, 11.5, -59, 4, 2.6); B.gemRow(-2, 11.5, -57, -61, 2);
+      B.mushroom(0, 10, -65, 1.6); B.box(0, 14, -71, 4, 2, 4); B.gem(0, 14, -71);
+      B.crumble(0, 14, -76, 3, 3); B.crumble(0, 14, -80.5, 3, 3);
+      B.box(0, 13, -86, 5, 2, 5); B.cp(0, 13, -86); B.statue(-1.8, 13, -87.8, .6, .3); B.statue(1.8, 13, -87.8, .6, -.3);
+      B.box(0, 9, -93, 3, 2, 3); B.box(0, 5, -98, 3, 2, 3); B.gem(0, 9, -93); B.gem(0, 5, -98);
+      B.box(0, 2, -106, 6, 2, 10); B.cp(0, 2, -103);
+      B.arena(0, 2, -125, { type: 'serpent', name: 'נחש המגדל', hp: 22, speed: 1.15, double: true, minions: true });
+    },
+  },
+  {
+    name: 'גשר הירח', sky: 'night', sub: 'כל המכשולים יחד תחת אור הירח — עין היהלום הזועמת',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.box(0, 0, -16, 4, 1, 20); B.boulder(0, 0, -25, -7, 3, 0); B.laser(0, 0, -16, 4, 2.6, 1.3); B.gemRow(1.4, 0, -9, -23, 3);
+      B.box(0, 0, -30, 4, 2, 4); B.cp(0, 0, -30);
+      B.move(0, 0, -36, 3, 3, 'x', 3, 1.6); B.vanish(0, .5, -41, 3, 3, 2.8, 0); B.move(0, 1, -47, 3, 3, 'z', 1.5, 1.3);
+      B.gem(0, .5, -41);
+      B.box(0, 1.5, -53, 4, 2, 4); B.cp(0, 1.5, -53);
+      B.mushroom(0, 1, -58, 1.4);
+      B.box(0, 5, -64, 4, 1, 6); B.spinner(0, 5, -64, 3.4, 2.6); B.gem(0, 5, -62);
+      B.crumble(0, 5, -70, 3, 3); B.vanish(0, 5, -74.5, 3, 3, 3, 1); B.crumble(0, 5, -79, 3, 3);
+      B.gem(0, 5, -70); B.gem(0, 5, -79);
+      B.box(0, 4, -85, 5, 2, 5); B.cp(0, 4, -85);
+      B.box(0, 2, -94, 6, 2, 12); B.laser(0, 2, -94, 6, 2.2, 0); B.cp(0, 2, -90);
+      B.arena(0, 2, -114, { type: 'eye', name: 'עין היהלום הזועמת', hp: 24, speed: 1.15, beams: 2, minions: true });
+    },
+  },
+  {
+    name: 'כס היהלום', sky: 'blood', sub: 'השלב האחרון — מלך היהלומים יושב על כסאו',
+    build(B) {
+      B.box(0, 0, 0, 8, 2, 12);
+      B.box(0, 0, -14, 6, 2, 16); B.laser(0, 0, -10, 6, 2.4, 0); B.laser(0, 0, -16, 6, 2.4, 1.2); B.gemRow(-2, 0, -12, -20, 3);
+      B.mushroom(0, -1, -26, 1.6);
+      B.box(0, 3, -32, 4, 2, 4); B.cp(0, 3, -32);
+      B.box(0, 3, -41, 3, .8, 10, M.wood); B.spinner(0, 3, -41, 2.8, 2.8); B.gemRow(0, 3, -37, -45, 2);
+      B.vanish(0, 3, -49.5, 3, 3, 2.6, 0); B.crumble(0, 3, -54, 3, 3); B.vanish(0, 3, -58.5, 3, 3, 2.6, 1.3);
+      B.gem(0, 3, -49.5); B.gem(0, 3, -54); B.gem(0, 3, -58.5);
+      B.box(0, 3, -64, 5, 2, 5); B.cp(0, 3, -64);
+      B.box(0, 3, -76, 4, 1, 16); B.boulder(0, 3, -83, -69, 3, 0); B.gemRow(1.4, 3, -70, -82, 3);
+      B.move(0, 3, -88, 3, 3, 'y', 1.5, 1.5);
+      B.box(0, 4.5, -93, 4, 2, 4); B.cp(0, 4.5, -93);
+      B.move(0, 4.5, -99, 3, 3, 'x', 3, 1.7); B.mushroom(0, 3.5, -104.5, 1.6);
+      B.box(0, 8, -110, 4, 2, 4); B.gem(0, 8, -110); B.statue(-1.4, 8, -111.4, .55, .3); B.statue(1.4, 8, -111.4, .55, -.3);
+      B.box(0, 2, -120, 6, 2, 12); B.laser(0, 2, -122, 6, 2.2, 0); B.cp(0, 2, -117);
+      B.arena(0, 2, -140, { type: 'king', name: 'מלך היהלומים', hp: 34, speed: 1.15, scale: 3.8 });
     },
   },
 ];
@@ -1077,7 +1411,8 @@ const G = {
     this.cp.set(0, 0, 2);
     this.killY = Math.min(...this.plats.map(p => p.min.y)) - 6;
     this.players.forEach((p, k) => { p.dead = false; p.hearts = p.maxHearts; p.group.visible = true; p.shadow.visible = true; p.spawnAt(this.cpPos(k)); p.face = Math.PI; p.inv = 0; });
-    hud.level.textContent = `שלב ${i + 1}: ${LEVELS[i].name}`;
+    hud.level.textContent = `שלב ${i + 1}/${LEVELS.length}: ${LEVELS[i].name}`;
+    applySky(LEVELS[i].sky);
     hud.bossbar.style.display = 'none';
     banner(`שלב ${i + 1}: ${LEVELS[i].name}<small>${LEVELS[i].sub}</small>`, 3.5);
     this.snapCams();
@@ -1094,7 +1429,7 @@ const G = {
     if (s === 'menu') hud.card.innerHTML = MENU_HTML;
     if (s === 'pause') hud.card.innerHTML = `<h1>הפסקה</h1><h2>המקדש מחכה לכם...</h2><div class="start">לחצו P או Esc כדי להמשיך</div><div class="levels">לחצו M לחזרה לתפריט</div>`;
     if (s === 'over') hud.card.innerHTML = `<h1>אוי לא!</h1><h2>שני השחקנים נפלו בג'ונגל</h2><div class="tips">יהלומים שנאספו: 💎 ${this.gems}</div><div class="start">לחצו רווח או Enter כדי לנסות שוב מנקודת השמירה</div><div class="levels">לחצו M לחזרה לתפריט</div>`;
-    if (s === 'win') hud.card.innerHTML = `<h1>ניצחון! <span class="gem">💎</span></h1><h2>הבסתם את מלך הפסלים והצלתם את מקדש היהלומים!</h2><div class="tips" style="font-size:22px">סך הכל יהלומים: 💎 ${this.gems}</div><div class="start">לחצו רווח או Enter כדי לשחק שוב</div>`;
+    if (s === 'win') hud.card.innerHTML = `<h1>ניצחון! <span class="gem">💎</span></h1><h2>עברתם את כל 10 השלבים, הבסתם את מלך היהלומים והצלתם את המקדש!</h2><div class="tips" style="font-size:22px">סך הכל יהלומים: 💎 ${this.gems}</div><div class="start">לחצו רווח או Enter כדי לשחק שוב</div>`;
   },
 
   retry() {
@@ -1107,15 +1442,20 @@ const G = {
   spawnBoss() {
     if (this.boss) this.disposeBoss();
     this.waves.forEach(w => w.dispose()); this.shards.forEach(s => s.dispose()); this.waves = []; this.shards = [];
-    this.boss = new BOSSES[this.arena.boss](this.arena.c);
+    const cfg = typeof this.arena.boss === 'string' ? { type: this.arena.boss } : this.arena.boss;
+    this.boss = new BOSSES[cfg.type](this.arena.c, cfg);
     hud.bossbar.style.display = 'block'; hud.bossname.textContent = this.boss.name; this.updateBossBar();
   },
   disposeBoss() {
-    const b = this.boss; if (!b) return;
     const rm = o => o && o.parent && o.parent.remove(o);
-    rm(b.g); rm(b.marker); rm(b.head); rm(b.hole); rm(b.beam);
-    if (b.segs) b.segs.forEach(rm);
-    if (b.minions) b.minions.forEach(m => rm(m.g));
+    const clean = b => {
+      rm(b.g); rm(b.marker); rm(b.head); rm(b.hole); rm(b.beam);
+      if (b.segs) b.segs.forEach(rm);
+      if (b.beams) b.beams.forEach(x => rm(x.g));
+      if (b.minions) b.minions.forEach(m => rm(m.g));
+      if (b.parts) b.parts.forEach(clean);
+    };
+    if (this.boss) clean(this.boss);
     this.boss = null;
   },
   updateBossBar() { if (this.boss) hud.bossfill.style.width = `${100 * Math.max(0, this.boss.hp) / this.boss.maxHp}%`; },
@@ -1137,10 +1477,11 @@ const G = {
     const reach = new V3(pl.pos.x + Math.sin(pl.face) * 1.1, pl.pos.y + 1, pl.pos.z + Math.cos(pl.face) * 1.1);
     const b = this.boss;
     if (b && !b.dead && b.state !== 'dying' && b.state !== 'wake') {
-      for (const s of b.hitSpheres()) {
+      const spheres = b.hitSpheres().map(s => Object.assign(s, { vuln: s.vuln !== undefined ? s.vuln : b.vulnerable })).sort((a, c) => c.vuln - a.vuln);
+      for (const s of spheres) {
         if (s.p.distanceTo(reach) < s.r + 1) {
-          if (b.vulnerable && (b.hitCd || 0) > 0) { burst(reach, 0x9ff4ff, 3, 4); }
-          else if (b.vulnerable) {
+          if (s.vuln && (b.hitCd || 0) > 0) { burst(reach, 0x9ff4ff, 3, 4); }
+          else if (s.vuln) {
             b.hp--; b.hitCd = .45; SFX.hit(); burst(reach, 0x9ff4ff, 12, 8); this.shake = Math.max(this.shake, .15); this.updateBossBar();
             if (b.hp <= 0) this.bossDefeated();
           } else {
@@ -1293,7 +1634,7 @@ const MENU_HTML = `
   <div class="tips">אספו יהלומים 💎 (כל 10 = לב לשניכם) • געו בלוחות האבן כדי לשמור • הבוסים עשויים אבן —<br>
   תקפו אותם רק כשעיני היהלום שלהם זוהרות בכחול • אם אחד נופל, השני ממשיך והוא יחזור אחרי כמה שניות</div>
   <div class="start">לחצו רווח או Enter כדי להתחיל</div>
-  <div class="levels">בחירת שלב: <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> &nbsp;•&nbsp; הפסקה: <kbd>P</kbd></div>`;
+  <div class="levels">בחירת שלב (10 שלבים): <kbd>1</kbd>–<kbd>9</kbd>, ו־<kbd>0</kbd> לשלב 10 &nbsp;•&nbsp; הפסקה: <kbd>P</kbd></div>`;
 
 // ---------------------------------------------------------------- boot & main loop
 G.players = [new Player(0), new Player(1)];
@@ -1305,7 +1646,7 @@ window.G = G;
 function handleMeta() {
   const start = pressed.has('Space') || pressed.has('Enter') || pressed.has('NumpadEnter');
   if (G.state === 'menu') {
-    for (const [i, k] of ['Digit1', 'Digit2', 'Digit3'].entries()) if (pressed.has(k)) { G.startGame(i); return true; }
+    for (let i = 0; i < LEVELS.length; i++) if (pressed.has(`Digit${(i + 1) % 10}`)) { G.startGame(i); return true; }
     if (start) { G.startGame(0); return true; }
   } else if (G.state === 'play') {
     if (pressed.has('KeyP') || pressed.has('Escape')) { G.setState('pause'); return true; }
